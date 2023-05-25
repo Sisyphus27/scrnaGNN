@@ -2,6 +2,7 @@ import os
 # os.environ['R_HOME'] = "C:\\Users\\win10\\miniconda3\\envs\\env_stream\\Lib\\R\\bin"
 import numpy as np
 import pandas as pd
+import torch.optim
 from pandas.api.types import (
     is_string_dtype,
     is_numeric_dtype
@@ -87,40 +88,45 @@ from rpy2.robjects import r as R
 # import rpy2.robjects as robjects
 from rpy2.robjects import pandas2ri
 
-from utils import *
+from .utils import *
 # scikit_posthocs is currently not available in conda system.
 # We will update it once it can be installed via conda.
 # import scikit_posthocs as sp
-from scikit_posthocs import posthoc_conover
+from .scikit_posthocs import posthoc_conover
+import src.train
+import src.models
+import dgl
+import torch.nn.functional as F
 
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
 
 
 def set_figure_params(context='notebook', style='white', palette='deep', font='sans-serif', font_scale=1.1,
                       color_codes=True, dpi=80, dpi_save=150, figsize=[5.4, 4.8], rc=None):
-    """ Set global parameters for figures. Modified from sns.set()
-    Parameters
-    ----------
-    context : string or dict
+    """
+    Set global parameters for figures. Modified from sns.set()
+    :param context: string or dict
         Plotting context parameters, see seaborn :func:`plotting_context
-    style: `string`,optional (default: 'white')
+    :param style: `string`,optional (default: 'white')
         Axes style parameters, see seaborn :func:`axes_style`
-    palette : string or sequence
+    :param palette: string or sequence
         Color palette, see seaborn :func:`color_palette`
-    font_scale: `float`, optional (default: 1.3)
+    :param font:
+    :param font_scale: `float`, optional (default: 1.3)
         Separate scaling factor to independently scale the size of the font elements.
-    color_codes : `bool`, optional (default: True)
+    :param color_codes: `bool`, optional (default: True)
         If ``True`` and ``palette`` is a seaborn palette, remap the shorthand
         color codes (e.g. "b", "g", "r", etc.) to the colors from this palette.
-    dpi: `int`,optional (default: 80)
+    :param dpi: `int`,optional (default: 80)
         Resolution of rendered figures.
-    dpi_save: `int`,optional (default: 150)
+    :param dpi_save: `int`,optional (default: 150)
         Resolution of saved figures.
-    rc: `dict`,optional (default: None)
+    :param figsize:
+    :param rc: `dict`,optional (default: None)
         rc settings properties. Parameter mappings to override the values in the preset style.
         Please see https://matplotlib.org/tutorials/introductory/customizing.html#a-sample-matplotlibrc-file
+    :return:
     """
-
     sns.set(context=context, style=style, palette=palette, font=font, font_scale=font_scale, color_codes=color_codes,
             rc={'figure.dpi': dpi,
                 'savefig.dpi': dpi_save,
@@ -141,21 +147,13 @@ def set_figure_params(context='notebook', style='white', palette='deep', font='s
 
 
 def set_workdir(adata, workdir=None):
-    """Set working directory.
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Set working directory.
+    :param adata: AnnData
         Annotated data matrix.
-    workdir: `float`, optional (default: None)
+    :param workdir: `float`, optional (default: None)
         Working directory. If it's not specified, a folder named 'stream_result' will be created under the current directory
-    **kwargs: additional arguments to `Anndata` reading functions
-
-    Returns
-    -------
-    updates `adata` with the following fields and create a new working directory if it doesn't existing.
-    workdir: `str` (`adata.uns['workdir']`,dtype `str`)
-        Working directory.
+    :return: updates `adata` with the following fields and create a new working directory if it doesn't existing.
     """
     if (workdir == None):
         workdir = os.path.join(os.getcwd(), 'stream_result')
@@ -168,29 +166,23 @@ def set_workdir(adata, workdir=None):
 
 def read(file_name, file_path=None, file_format=None, delimiter='\t', workdir=None, file_sample='barcodes.tsv',
          file_feature='genes.tsv', **kwargs):
-    """Read gene expression matrix into anndata object.
-
-    Parameters
-    ----------
-    file_name: `str`
+    """
+    Read gene expression matrix into anndata object.
+    :param file_name: `str`
         Input data file name.
-    file_path: `str`, optional (default: None)
+    :param file_path: `str`, optional (default: None)
         File path. Empty string by default
-    file_format: `str`, optional (default: None)
-        File format. currently supported file formats: 'tsv','txt','tab','data','csv','mtx','h5ad','pklz','pkl'. If None, file_format will be inferred from the file extension.
-    delimiter: `str`, optional (default: '\t')
+    :param file_format:
+    :param delimiter: `str`, optional (default: '\t')
         Delimiter to use.
-    workdir: `float`, optional (default: None)
+    :param workdir: `float`, optional (default: None)
         Working directory. If it's not specified, a folder named 'stream_result' will be created under the current directory
-    file_sample:`str`, optional (default: 'barcodes.tsv')
+    :param file_sample: `str`, optional (default: 'barcodes.tsv')
         Sample file name. Only valid when file_format = 'mtx'
-    file_feature:`str`, optional (default: 'genes.tsv')
+    :param file_feature: `str`, optional (default: 'genes.tsv')
         Feature file name. Only valid when file_format = 'mtx'
-    **kwargs: additional arguments to `Anndata` reading functions
-
-    Returns
-    -------
-    AnnData object
+    :param kwargs: additional arguments to `Anndata` reading functions
+    :return: AnnData object
     """
     if (file_format is None):
         file_format = get_extension(file_name)
@@ -240,21 +232,20 @@ def read(file_name, file_path=None, file_format=None, delimiter='\t', workdir=No
 
 
 def write(adata, file_name=None, file_path=None, file_format=None):
-    """Write Anndate object to file
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Write Anndate object to file
+    :param adata: AnnData
         Annotated data matrix.
-    file_name: `str`, optional (default: None)
+    :param file_name: `str`, optional (default: None)
         File name. If it's not specified, a file named 'stream_result.pkl' will be created
         under the working directory
-    file_path: `str`, optional (default: '')
+    :param file_path: `str`, optional (default: '')
         File path. If it's not specified, it's set to working directory
-    file_format: `str`, optional (default: None)
+    :param file_format: `str`, optional (default: None)
         File format. By default it's compressed pickle file. Currently two file formats are supported:
         'pklz': compressed pickle file
         'pkl': pickle file
+    :return:
     """
 
     if (file_name is None):
@@ -276,19 +267,16 @@ def write(adata, file_name=None, file_path=None, file_format=None):
 
 
 def add_metadata(adata, file_name, delimiter='\t', file_path=''):
-    """Add metadata.
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Add metadata.
+    :param adata: AnnData
         Annotated data matrix.
-    file_path: `str`, optional (default: '')
-        The file path of metadata file.
-    file_name: `str`, optional (default: None)
+    :param file_name: `str`, optional (default: None)
         The file name of metadata file.
-
-    Returns
-    -------
+    :param delimiter:
+    :param file_path: `str`, optional (default: '')
+        The file path of metadata file.
+    :return:
     updates `adata` with the following fields.
     label: `pandas.core.series.Series` (`adata.obs['label']`,dtype `str`)
         Array of #observations that stores the label of each cell.
@@ -326,20 +314,16 @@ def add_metadata(adata, file_name, delimiter='\t', file_path=''):
 
 
 def add_cell_labels(adata, file_path='', file_name=None):
-    """Add cell lables.
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Add cell lables.
+    :param adata: AnnData
         Annotated data matrix.
-    file_path: `str`, optional (default: '')
+    :param file_path: `str`, optional (default: '')
         The file path of cell label file.
-    file_name: `str`, optional (default: None)
+    :param file_name: `str`, optional (default: None)
         The file name of cell label file. If file_name is not specified, 'unknown' is added as the label for all cells.
+    :return:
 
-
-    Returns
-    -------
     updates `adata` with the following fields.
     label: `pandas.core.series.Series` (`adata.obs['label']`,dtype `str`)
         Array of #observations that stores the label of each cell.
@@ -358,19 +342,16 @@ def add_cell_labels(adata, file_path='', file_name=None):
 
 
 def add_cell_colors(adata, file_path='', file_name=None):
-    """Add cell colors.
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Add cell colors.
+    :param adata: AnnData
         Annotated data matrix.
-    file_path: `str`, optional (default: '')
+    :param file_path: `str`, optional (default: '')
         The file path of cell label color file.
-    file_name: `str`, optional (default: None)
+    :param file_name: `str`, optional (default: None)
         The file name of cell label color file. If file_name is not specified, random color are generated for each cell label.
+    :return:
 
-    Returns
-    -------
     updates `adata` with the following fields.
     label_color: `pandas.core.series.Series` (`adata.obs['label_color']`,dtype `str`)
         Array of #observations that stores the color of each cell (hex color code).
@@ -401,39 +382,17 @@ def add_cell_colors(adata, file_path='', file_name=None):
     return None
 
 
-# def add_cell_colors(adata,file_path = None,file_name=None,key_label='label',key_color = 'label_color'):
-#     labels_unique = adata.obs[key_label].unique()
-#     if(file_name!=None):
-#         df_colors = pd.read_csv(file_path+file_name,sep='\t',header=None,index_col=None,
-#                                 compression= 'gzip' if file_name.split('.')[-1]=='gz' else None)
-
-#         adata.uns[key_color] = {df_colors.iloc[x,0]:df_colors.iloc[x,1] for x in range(df_colors.shape[0])}
-#     else:
-#         list_colors = sns.color_palette("hls",n_colors=len(labels_unique)).as_hex()
-#         adata.uns[key_color] = {x:list_colors[i] for i,x in enumerate(labels_unique)}
-#     df_cell_colors = adata.obs.copy()
-#     df_cell_colors[key_color] = ''
-#     for x in labels_unique:
-#         id_cells = np.where(adata.obs[key_label]==x)[0]
-#         df_cell_colors.loc[df_cell_colors.index[id_cells],key_color] = adata.uns[key_color][x]
-#     adata.obs[key_color] = df_cell_colors[key_color]
-#     return None
-
-
 def cal_qc(adata, expr_cutoff=1, assay='rna'):
-    """Calculate quality control metrics.
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Calculate quality control metrics.
+    :param adata: AnnData
         Annotated data matrix.
-    expr_cutoff: `float`, optional (default: 1)
+    :param expr_cutoff: `float`, optional (default: 1)
         Expression cutoff. If greater than expr_cutoff,the feature is considered 'expressed'
-    assay: `str`, optional (default: 'rna')
+    :param assay: `str`, optional (default: 'rna')
             Choose from {{'rna','atac'}},case insensitive
+    :return:
 
-    Returns
-    -------
     updates `adata` with the following fields.
     n_counts: `pandas.Series` (`adata.var['n_counts']`,dtype `int`)
        The number of read count each gene has.
@@ -490,39 +449,33 @@ def plot_qc(adata,
             fig_size=(4, 4), jitter=0.4, size=1, log_scale=None, hist_plot=None,
             pad=1.08, w_pad=None, h_pad=3,
             save_fig=False, fig_path=None, fig_name='qc.pdf', ):
-    """Plot QC metrics
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Plot QC metrics
+    :param adata: AnnData
         Annotated data matrix.
-    fig_size: `tuple`, optional (default: (4,4))
+    :param fig_size: `tuple`, optional (default: (4,4))
         figure size.
-    jitter: `float`, (default: 0.4)
+    :param jitter: `float`, (default: 0.4)
         Amount of jitter (only along the categorical axis) to apply.
-    size : `int`, (default: None)
+    :param size: `int`, (default: None)
         Size of the jitter points.
-    log_scale: `list`, (default: None)
+    :param log_scale: `list`, (default: None)
         Indices of plots to use log-transformation (0-indexed).
         Index starts at 0 in the upper left corner and increases to the right.
-    hist_plot: `list`, (default: None)
+    :param hist_plot: `list`, (default: None)
         Indices of plots to use histogram plot (0-indexed).
         Index starts at 0 in the upper left corner and increases to the right.
-    pad: `float`, optional (default: 1.08)
+    :param pad: `float`, optional (default: 1.08)
         Padding between the figure edge and the edges of subplots, as a fraction of the font size.
-    h_pad, w_pad: `float`, optional (default: None)
+    :param w_pad, h_pad: `float`, optional (default: None)
         Padding (height/width) between edges of adjacent subplots, as a fraction of the font size. Defaults to pad.
-    save_fig: `bool`, optional (default: False)
+    :param save_fig: `bool`, optional (default: False)
         if True,save the figure.
-    fig_path: `str`, optional (default: None)
+    :param fig_path: `str`, optional (default: None)
         if save_fig is True, specify figure path. if None, adata.uns['workdir'] will be used.
-    fig_name: `str`, optional (default: 'qc.pdf')
+    :param fig_name: `str`, optional (default: 'qc.pdf')
         if save_fig is True, specify figure name.
-
-    Returns
-    -------
-    None
-
+    :return:
     """
 
     assert 'assay' in adata.uns_keys(), 'please run `cal_qc(adata)` first'
@@ -606,25 +559,25 @@ def filter_features(adata,
                     min_pct_cells=None, max_pct_cells=None,
                     min_n_counts=None, max_n_counts=None,
                     expr_cutoff=1, assay=None):
-    """Filter out features based on different metrics.
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Filter out features based on different metrics.
+    :param adata: AnnData
         Annotated data matrix.
-    min_n_cells: `int`, optional (default: None)
+    :param min_n_cells: `int`, optional (default: None)
         Minimum number of cells expressing one feature
-    min_pct_cells: `float`, optional (default: None)
+    :param max_n_cells:
+    :param min_pct_cells: `float`, optional (default: None)
         Minimum percentage of cells expressing one feature
-    min_n_counts: `int`, optional (default: None)
+    :param max_pct_cells:
+    :param min_n_counts: `int`, optional (default: None)
         Minimum number of read count for one feature
-    expr_cutoff: `float`, optional (default: 1)
+    :param max_n_counts:
+    :param expr_cutoff: `float`, optional (default: 1)
         Expression cutoff. If greater than expr_cutoff,the feature is considered 'expressed'
-    assay: `str`, optional (default: 'rna')
+    :param assay: `str`, optional (default: 'rna')
             Choose from {{'rna','atac'}},case insensitive
+    :return:
 
-    Returns
-    -------
     updates `adata` with a subset of features that pass the filtering.
     updates `adata` with the following fields if cal_qc() was not performed.
     n_counts: `pandas.Series` (`adata.var['n_counts']`,dtype `int`)
@@ -697,24 +650,25 @@ def filter_cells(adata,
                  min_pct_features=None, max_pct_features=None,
                  min_n_counts=None, max_n_counts=None,
                  expr_cutoff=1, assay=None):
-    """Filter out cells based on different metrics.
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Filter out cells based on different metrics.
+    :param adata: AnnData
         Annotated data matrix.
-    min_n_features: `int`, optional (default: None)
+    :param min_n_features: `int`, optional (default: None)
         Minimum number of features expressed
-    min_pct_features: `float`, optional (default: None)
+    :param max_n_features:
+    :param min_pct_features: `float`, optional (default: None)
         Minimum percentage of features expressed
-    min_n_counts: `int`, optional (default: None)
+    :param max_pct_features:
+    :param min_n_counts: `int`, optional (default: None)
         Minimum number of read count for one cell
-    expr_cutoff: `float`, optional (default: 1)
+    :param max_n_counts:
+    :param expr_cutoff: `float`, optional (default: 1)
         Expression cutoff. If greater than expr_cutoff,the gene is considered 'expressed'
-    assay: `str`, optional (default: 'rna')
+    :param assay: `str`, optional (default: 'rna')
             Choose from {{'rna','atac'}},case insensitive
-    Returns
-    -------
+    :return:
+
     updates `adata` with a subset of cells that pass the filtering.
     updates `adata` with the following fields if cal_qc() was not performed.
     n_counts: `pandas.Series` (`adata.obs['n_counts']`,dtype `int`)
@@ -728,6 +682,7 @@ def filter_cells(adata,
     pct_peaks: `pandas.Series` (`adata.obs['pct_peaks']`,dtype `int`)
        The percentage of peaks expressed in each cell.
     """
+
     if (assay is None):
         if ('assay' in adata.uns_keys()):
             assay = adata.uns['assay']
@@ -796,17 +751,14 @@ def filter_cells(adata,
 
 
 def log_transform(adata, base=2):
-    """Logarithmize gene expression.
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Logarithmize gene expression.
+    :param adata: AnnData
         Annotated data matrix.
-    base: `int`, optional (default: 2)
+    :param base: `int`, optional (default: 2)
         The base used to calculate logarithm
+    :return:
 
-    Returns
-    -------
     updates `adata` with the following fields.
     X: `numpy.ndarray` (`adata.X`)
         Store #observations × #var_genes logarithmized data matrix.
@@ -816,36 +768,18 @@ def log_transform(adata, base=2):
     return None
 
 
-# def normalize_per_cell(adata):
-#     """Normalize gene expression based on library size.
-
-#     Parameters
-#     ----------
-#     adata: AnnData
-#         Annotated data matrix.
-
-#     Returns
-#     -------
-#     updates `adata` with the following fields.
-#     X: `numpy.ndarray` (`adata.X`)
-#         Store #observations × #var_genes normalized data matrix.
-#     """
-#     adata.X = (np.divide(adata.X.T,adata.X.sum(axis=1)).T)*1e6
-
 def normalize(adata, method='lib_size'):
-    """Normalize count matrix.
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Normalize count matrix.
+    :param adata: AnnData
         Annotated data matrix.
-    method: `str`, optional (default: 'lib_size')
+    :param method: `str`, optional (default: 'lib_size')
         Choose from {{'lib_size','tf_idf'}}
         Method used for dimension reduction.
         'lib_size': Total-count normalize (library-size correct)
         'tf_idf': TF-IDF (term frequency–inverse document frequency) transformation
-    Returns
-    -------
+    :return:
+
     updates `adata` with the following fields.
     X: `numpy.ndarray` (`adata.X`)
         Store #observations × #var_genes normalized data matrix.
@@ -859,15 +793,12 @@ def normalize(adata, method='lib_size'):
 
 
 def remove_mt_genes(adata):
-    """remove mitochondrial genes.
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    remove mitochondrial genes.
+    :param adata: AnnData
         Annotated data matrix.
+    :return:
 
-    Returns
-    -------
     updates `adata` with a subset of genes that excluded mitochondrial genes.
     """
 
@@ -883,35 +814,32 @@ def remove_mt_genes(adata):
 def select_variable_genes(adata, loess_frac=0.01, percentile=95, n_genes=None, n_jobs=multiprocessing.cpu_count(),
                           save_fig=False, fig_name='std_vs_means.pdf', fig_path=None, fig_size=(4, 4),
                           pad=1.08, w_pad=None, h_pad=None):
-    """Select the most variable genes.
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Select the most variable genes.
+    :param adata: AnnData
         Annotated data matrix.
-    loess_frac: `float`, optional (default: 0.1)
+    :param loess_frac: `float`, optional (default: 0.1)
         Between 0 and 1. The fraction of the data used when estimating each y-value in LOWESS function.
-    percentile: `int`, optional (default: 95)
+    :param percentile: `int`, optional (default: 95)
         Between 0 and 100. Specify the percentile to select genes.Genes are ordered based on its distance from the fitted curve.
-    n_genes: `int`, optional (default: None)
+    :param n_genes: `int`, optional (default: None)
         Specify the number of selected genes. Genes are ordered based on its distance from the fitted curve.
-    n_jobs: `int`, optional (default: all available cpus)
+    :param n_jobs: `int`, optional (default: all available cpus)
         The number of parallel jobs to run when calculating the distance from each gene to the fitted curve
-    save_fig: `bool`, optional (default: False)
+    :param save_fig: `bool`, optional (default: False)
         if True,save the figure.
-    fig_size: `tuple`, optional (default: (4,4))
-        figure size.
-    fig_path: `str`, optional (default: '')
-        if empty, adata.uns['workdir'] will be used.
-    fig_name: `str`, optional (default: 'std_vs_means.pdf')
+    :param fig_name: `str`, optional (default: 'std_vs_means.pdf')
         if save_fig is True, specify figure name.
-    pad: `float`, optional (default: 1.08)
+    :param fig_path: `str`, optional (default: '')
+        if empty, adata.uns['workdir'] will be used.
+    :param fig_size: `tuple`, optional (default: (4,4))
+        figure size.
+    :param pad: `float`, optional (default: 1.08)
         Padding between the figure edge and the edges of subplots, as a fraction of the font size.
-    h_pad, w_pad: `float`, optional (default: None)
+    :param w_pad, h_pad: `float`, optional (default: None)
         Padding (height/width) between edges of adjacent subplots, as a fraction of the font size. Defaults to pad.
+    :return:
 
-    Returns
-    -------
     updates `adata` with the following fields.
     var_genes: `numpy.ndarray` (`adata.obsm['var_genes']`)
         Store #observations × #var_genes data matrix used for subsequent dimension reduction.
@@ -967,32 +895,30 @@ def select_variable_genes(adata, loess_frac=0.01, percentile=95, n_genes=None, n
 def select_gini_genes(adata, loess_frac=0.1, percentile=95, n_genes=None,
                       save_fig=False, fig_name='gini_vs_max.pdf', fig_path=None, fig_size=(4, 4),
                       pad=1.08, w_pad=None, h_pad=None):
-    """Select high gini genes for rare cell types.
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Select high gini genes for rare cell types.
+    :param adata: AnnData
         Annotated data matrix.
-    loess_frac: `float`, optional (default: 0.1)
+    :param loess_frac: `float`, optional (default: 0.1)
         Between 0 and 1. The fraction of the data used when estimating each y-value in LOWESS function.
-    percentile: `int`, optional (default: 95)
+    :param percentile: `int`, optional (default: 95)
         Between 0 and 100. Specify the percentile to select genes.Genes are ordered based on the residuals.
-    n_genes: `int`, optional (default: None)
+    :param n_genes: `int`, optional (default: None)
         Specify the number of selected genes. Genes are ordered based on the residuals.
-    save_fig: `bool`, optional (default: False)
+    :param save_fig: `bool`, optional (default: False)
         if True,save the figure.
-    fig_size: `tuple`, optional (default: (4,4))
-        figure size.
-    fig_path: `str`, optional (default: '')
-        if empty, adata.uns['workdir'] will be used.
-    fig_name: `str`, optional (default: 'gini_vs_max.pdf')
+    :param fig_name: `str`, optional (default: 'gini_vs_max.pdf')
         if save_fig is True, specify figure name.
-    pad: `float`, optional (default: 1.08)
+    :param fig_path: `str`, optional (default: '')
+        if empty, adata.uns['workdir'] will be used.
+    :param fig_size: `tuple`, optional (default: (4,4))
+        figure size.
+    :param pad: `float`, optional (default: 1.08)
         Padding between the figure edge and the edges of subplots, as a fraction of the font size.
-    h_pad, w_pad: `float`, optional (default: None)
+    :param w_pad, h_hap: `float`, optional (default: None)
         Padding (height/width) between edges of adjacent subplots, as a fraction of the font size. Defaults to pad.
+    :return:
 
-    Returns
-    -------
     updates `adata` with the following fields.
     gini: `pandas.core.series.Series` (`adata.var['gini']`,dtype `float`)
         Gini coefficients for all genes.
@@ -1037,39 +963,37 @@ def select_gini_genes(adata, loess_frac=0.1, percentile=95, n_genes=None,
 def select_top_principal_components(adata, feature=None, n_pc=15, max_pc=100, first_pc=False, use_precomputed=True,
                                     save_fig=False, fig_name='top_pcs.pdf', fig_path=None, fig_size=(4, 4),
                                     pad=1.08, w_pad=None, h_pad=None):
-    """Select top principal components.
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Select top principal components.
+    :param adata: AnnData
         Annotated data matrix.
-    feature: `str`, optional (default: None)
+    :param feature: str`, optional (default: None)
         Choose from {{'var_genes'}}
         Features used for pricipal component analysis
         If None, all the genes will be used.
         IF 'var_genes', the most variable genes obtained from select_variable_genes() will be used.
-    n_pc: `int`, optional (default: 15)
+    :param n_pc: `int`, optional (default: 15)
         The number of selected principal components.
-    max_pc: `int`, optional (default: 100)
+    :param max_pc: `int`, optional (default: 100)
         The maximum number of principal components used for variance Ratio plot.
-    first_pc: `bool`, optional (default: False)
+    :param first_pc: `bool`, optional (default: False)
         If True, the first principal component will be included
-    use_precomputed: `bool`, optional (default: True)
+    :param use_precomputed: `bool`, optional (default: True)
         If True, the PCA results from previous computing will be used
-    save_fig: `bool`, optional (default: False)
+    :param save_fig: `bool`, optional (default: False)
         if True,save the figure.
-    fig_size: `tuple`, optional (default: (4,4))
-        figure size.
-    fig_path: `str`, optional (default: None)
-        if None, adata.uns['workdir'] will be used.
-    fig_name: `str`, optional (default: 'top_pcs.pdf')
+    :param fig_name: `str`, optional (default: 'top_pcs.pdf')
         if save_fig is True, specify figure name.
-    pad: `float`, optional (default: 1.08)
+    :param fig_path: `str`, optional (default: None)
+        if None, adata.uns['workdir'] will be used.
+    :param fig_size: `tuple`, optional (default: (4,4))
+        figure size.
+    :param pad: `float`, optional (default: 1.08)
         Padding between the figure edge and the edges of subplots, as a fraction of the font size.
-    h_pad, w_pad: `float`, optional (default: None)
+    :param w_pad, h_pad: `float`, optional (default: None)
         Padding (height/width) between edges of adjacent subplots, as a fraction of the font size. Defaults to pad.
+    :return:
 
-    Returns
-    -------
     updates `adata` with the following fields.
     pca: `numpy.ndarray` (`adata.obsm['pca']`)
         Store #observations × n_components data matrix after pca. Number of components to keep is min(#observations,#variables)
@@ -1144,40 +1068,37 @@ def select_top_principal_components(adata, feature=None, n_pc=15, max_pc=100, fi
 
 def dimension_reduction(adata, n_neighbors=50, nb_pct=None, n_components=3, n_jobs=1,
                         feature='var_genes', method='se', eigen_solver=None):
-    """Perform dimension reduction.
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Perform dimension reduction.
+    :param adata: AnnData
         Annotated data matrix.
-    n_neighbors: `int`, optional (default: 50)
+    :param n_neighbors: `int`, optional (default: 50)
         The number of neighbor cells used for manifold learning (only valid when 'mlle','se', or 'umap' is specified).
-    nb_pct: `float`, optional (default: None)
+    :param nb_pct: `float`, optional (default: None)
         The percentage of neighbor cells (when sepcified, it will overwrite n_neighbors).
-    n_components: `int`, optional (default: 3)
+    :param n_components: `int`, optional (default: 3)
         Number of components to keep.
-    n_jobs: `int`, optional (default: 1)
+    :param n_jobs: `int`, optional (default: 1)
         The number of parallel jobs to run.
-    feature: `str`, optional (default: 'var_genes')
+    :param feature: `str`, optional (default: 'var_genes')
         Choose from {{'var_genes','top_pcs','all'}}
         Feature used for dimension reduction.
         'var_genes': most variable genes
         'top_pcs': top principal components
         'all': all available features (genes)
-    method: `str`, optional (default: 'se')
+    :param method: `str`, optional (default: 'se')
         Choose from {{'se','mlle','umap','pca'}}
         Method used for dimension reduction.
         'se': Spectral embedding algorithm
         'mlle': Modified locally linear embedding algorithm
         'umap': Uniform Manifold Approximation and Projection
         'pca': Principal component analysis
-    eigen_solver: `str`, optional (default: None)
+    :param eigen_solver: `str`, optional (default: None)
         For 'mlle', choose from {{'arpack', 'dense'}}
         For 'se', choose from {{'arpack', 'lobpcg', or 'amg'}}
         The eigenvalue decomposition strategy to use
+    :return:
 
-    Returns
-    -------
     updates `adata` with the following fields.
 
     X_dr : `numpy.ndarray` (`adata.obsm['X_dr']`)
@@ -1202,7 +1123,7 @@ def dimension_reduction(adata, n_neighbors=50, nb_pct=None, n_components=3, n_jo
 
     if (feature not in ['var_genes', 'top_pcs', 'all']):
         raise ValueError("unrecognized feature '%s'" % feature)
-    if (method not in ['mlle', 'se', 'umap', 'pca']):
+    if (method not in ['mlle', 'se', 'umap', 'pca', 'ae']):
         raise ValueError("unrecognized method '%s'" % method)
     if (feature == 'var_genes'):
         input_data = adata.obsm['var_genes']
@@ -1251,6 +1172,60 @@ def dimension_reduction(adata, n_neighbors=50, nb_pct=None, n_components=3, n_jo
         adata.uns['trans_se'] = trans
         adata.obsm['X_se'] = trans.embedding_
         adata.obsm['X_dr'] = trans.embedding_
+    if (method == 'ae'):
+        device = src.train.get_device()
+        labels_encoded,labels_mapping=pd.factorize(adata.obs["label"])
+        labels=np.array(labels_encoded)
+        graph = src.train.make_graph(
+            input_data,
+            labels,
+            dense_dim=50,
+            node_features="scale",
+            normalize_weights="log_per_cell"
+        )
+        graph = graph.to(device)
+
+        labels = graph.ndata["label"]
+        train_ids = np.where(labels.cpu() != -1)[0]
+        train_ids = torch.from_numpy(train_ids).to(device)
+        sampler = dgl.dataloading.MultiLayerFullNeighborSampler(1)
+
+        dataloader = dgl.dataloading.DataLoader(
+            graph,
+            train_ids,
+            sampler,
+            batch_size=128,
+            shuffle=True,
+            drop_last=False,
+        )
+
+        model = src.models.GCNAE(
+            in_features=50,
+            n_hidden=200,
+            n_layers=1,
+            activation=F.relu,
+            dropout=0.1,
+            hidden=[100],
+            hidden_relu=False,
+            hidden_bn=False,
+        ).to(device)
+        if "label" in adata.obs_keys():
+            n_clusters = len(set(adata.obs["label"]))
+        else:
+            n_clusters = None
+
+        for run in range(3):
+            if run == 0:
+                print(f">", model)
+            optim = torch.optim.Adam(model.parameters(), lr=1e-5)
+
+            scores, z = src.train.train(model, optim,
+                                        10, dataloader,
+                                        n_clusters, plot=True,
+                                        save=True)
+        adata.obsm['X_ae'] = z
+        adata.obsm['X_dr'] = z
+
     if (method == 'umap'):
         reducer = umap.UMAP(n_neighbors=n_neighbors, n_components=n_components, random_state=42)
         trans = reducer.fit(input_data)
@@ -1276,63 +1251,57 @@ def plot_dimension_reduction(adata, n_components=None, comp1=0, comp2=1, comp3=2
                              show_text=False, show_graph=False,
                              save_fig=False, fig_path=None, fig_name='dimension_reduction.pdf',
                              plotly=False):
-    """Plot the manifold where the graph is learned
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Plot the manifold where the graph is learned
+    :param adata: AnnData
         Annotated data matrix.
-    n_components: `int`, optional (default: 3)
+    :param n_components: `int`, optional (default: 3)
         Number of components to be plotted.
-    comp1: `int`, optional (default: 0)
+    :param comp1: `int`, optional (default: 0)
         Component used for x axis.
-    comp2: `int`, optional (default: 1)
+    :param comp2: `int`, optional (default: 1)
         Component used for y axis.
-    comp3: `int`, optional (default: 2)
+    :param comp3: `int`, optional (default: 2)
         Component used for z axis. (only valid when n_components=3)
-    color: `list` optional (default: None)
+    :param color: `list` optional (default: None)
         Column names of observations (adata.obs.columns) or variable names(adata.var_names). A list of names to be plotted.
-    key_graph: `str`, optional (default: None):
+    :param key_graph: `str`, optional (default: None):
         Choose from {{'epg','seed_epg','ori_epg'}}
         Specify gragh to be plotted.
         'epg' current elastic principal graph
         'seed_epg' seed structure used for elastic principal graph learning, which is obtained by running seed_elastic_principal_graph()
         'ori_epg' original elastic principal graph, which is obtained by running elastic_principal_graph()
-    fig_size: `tuple`, optional (default: None)
+    :param fig_size: `tuple`, optional (default: None)
         figure size.
-    fig_ncol: `int`, optional (default: 3)
+    :param fig_ncol: `int`, optional (default: 3)
         the number of columns of the figure panel
-    fig_legend_order: `dict`,optional (default: None)
+    :param fig_legend_ncol: `int`, optional (default: 1)
+        The number of columns that the legend has.
+    :param fig_legend_order: `dict`,optional (default: None)
         Specified order for the appearance of the annotation keys.Only valid for ategorical variable
         e.g. fig_legend_order = {'ann1':['a','b','c'],'ann2':['aa','bb','cc']}
-    fig_legend_ncol: `int`, optional (default: 1)
-        The number of columns that the legend has.
-    vmin,vmax: `float`, optional (default: None)
+    :param vmin, vmax: `float`, optional (default: None)
         The min and max values are used to normalize continuous values. If None, the respective min and max of continuous values is used.
-    alpha: `float`, optional (default: 0.8)
+    :param alpha: `float`, optional (default: 0.8)
         0.0 transparent through 1.0 opaque
-    pad: `float`, optional (default: 1.08)
+    :param pad: `float`, optional (default: 1.08)
         Padding between the figure edge and the edges of subplots, as a fraction of the font size.
-    h_pad, w_pad: `float`, optional (default: None)
+    :param w_pad, h_pad: `float`, optional (default: None)
         Padding (height/width) between edges of adjacent subplots, as a fraction of the font size. Defaults to pad.
-    show_text: `bool`, optional (default: False)
+    :param show_text: `bool`, optional (default: False)
         If True, node state label will be shown
-    show_graph: `bool`, optional (default: False)
+    :param show_graph: `bool`, optional (default: False)
         If True, the learnt principal graph will be shown
-    save_fig: `bool`, optional (default: False)
+    :param save_fig: `bool`, optional (default: False)
         if True,save the figure.
-    fig_path: `str`, optional (default: None)
+    :param fig_path: `str`, optional (default: None)
         if save_fig is True, specify figure path. if None, adata.uns['workdir'] will be used.
-    fig_name: `str`, optional (default: 'dimension_reduction.pdf')
+    :param fig_name: `str`, optional (default: 'dimension_reduction.pdf')
         if save_fig is True, specify figure name.
-    plotly: `bool`, optional (default: False)
+    :param plotly: `bool`, optional (default: False)
         if True, plotly will be used to make interactive plots
-    Returns
-    -------
-    None
-
+    :return:
     """
-
     if (fig_path is None):
         fig_path = adata.uns['workdir']
     fig_size = mpl.rcParams['figure.figsize'] if fig_size is None else fig_size
@@ -1601,47 +1570,42 @@ def plot_branches(adata, n_components=None, comp1=0, comp2=1, comp3=2, key_graph
                   show_text=False,
                   save_fig=False, fig_path=None, fig_name='branches.pdf',
                   plotly=False):
-    """Plot branches. The branches contain all the nodes learnt from ElPiGraph
+    """
+    Plot branches. The branches contain all the nodes learnt from ElPiGraph
 
-    Parameters
-    ----------
-    adata: AnnData
+    :param adata: AnnData
         Annotated data matrix.
-    n_components: `int`, optional (default: 3)
+    :param n_components: `int`, optional (default: 3)
         Number of components to be plotted.
-    comp1: `int`, optional (default: 0)
+    :param comp1: `int`, optional (default: 0)
         Component used for x axis.
-    comp2: `int`, optional (default: 1)
+    :param comp2: `int`, optional (default: 1)
         Component used for y axis.
-    comp3: `int`, optional (default: 2)
+    :param comp3: `int`, optional (default: 2)
         Component used for z axis. (only valid when n_components=3)
-    key_graph: `str`, optional (default: None):
+    :param key_graph: `str`, optional (default: None):
         Choose from {{'epg','seed_epg','ori_epg'}}
         Specify gragh to be plotted.
         'epg' current elastic principal graph
         'seed_epg' seed structure used for elastic principal graph learning, which is obtained by running seed_elastic_principal_graph()
         'ori_epg' original elastic principal graph, which is obtained by running elastic_principal_graph()
-    fig_size: `tuple`, optional (default: None)
+    :param fig_size: `tuple`, optional (default: None)
         figure size.
-    pad: `float`, optional (default: 1.08)
+    :param pad: `float`, optional (default: 1.08)
         Padding between the figure edge and the edges of subplots, as a fraction of the font size.
-    h_pad, w_pad: `float`, optional (default: None)
+    :param w_pad, h_pad: `float`, optional (default: None)
         Padding (height/width) between edges of adjacent subplots, as a fraction of the font size. Defaults to pad.
-    show_text: `bool`, optional (default: False)
+    :param show_text: `bool`, optional (default: False)
         If True, node state label will be shown
-    save_fig: `bool`, optional (default: False)
+    :param save_fig: `bool`, optional (default: False)
         if True,save the figure.
-    fig_path: `str`, optional (default: None)
+    :param fig_path: `str`, optional (default: None)
         if save_fig is True, specify figure path. if None, adata.uns['workdir'] will be used.
-    fig_name: `str`, optional (default: 'branches.pdf')
+    :param fig_name: `str`, optional (default: 'branches.pdf')
         if save_fig is True, specify figure name.
-    plotly: `bool`, optional (default: False)
+    :param plotly: `bool`, optional (default: False)
         if True, plotly will be used to make interactive plots
-
-    Returns
-    -------
-    None
-
+    :return:
     """
 
     if (fig_path is None):
@@ -1770,17 +1734,13 @@ def plot_branches(adata, n_components=None, comp1=0, comp2=1, comp3=2, key_graph
 
 
 def switch_to_low_dimension(adata, n_components=2):
-    """Switch to low dimension space, in which the preliminary structure will be learnt.
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Switch to low dimension space, in which the preliminary structure will be learnt.
+    :param adata: AnnData
         Annotated data matrix
-    n_components: `int`, optional (default: 2)
+    :param n_components: `int`, optional (default: 2)
         Number of components used to infer the initial elastic principal graph.
-
-    Returns
-    -------
-    adata_low: AnnData
+    :return: adata_low: AnnData
         Annotated data matrix used in low dimensional space
     """
     if ('X_dr' not in adata.obsm_keys()):
@@ -1794,24 +1754,22 @@ def switch_to_low_dimension(adata, n_components=2):
 
 
 def infer_initial_structure(adata_low, nb_min=5):
-    """Infer the initial node positions and edges. It helps infer the initial structure used in high-dimensional space
-
-    Parameters
-    ----------
-    adata_low: AnnData
+    """
+    Infer the initial node positions and edges. It helps infer the initial structure used in high-dimensional space
+    :param adata_low: AnnData
         Annotated data matrix used in low dimensional space
-    nb_min: `int`, optional (default: 2)
+    :param nb_min: `int`, optional (default: 2)
         Minimum number of neighbour cells when mapping elastic principal graph from low-dimension to high-dimension.
         if the number of cells within one node is greater than nb_min, these cells will be used to calculate the new position of this node in high dimensional space
         if the number of cells within one node is less than or equal to nb_min, then nb_min nearest neighbor cells of this node will be used to calculate its new position in high dimensional space
+    :return:
 
-    Returns
-    -------
     init_nodes_pos: `array`, shape = [n_nodes,n_dimension], optional (default: `None`)
         initial node positions
     init_edges: `array`, shape = [n_edges,2], optional (default: `None`)
         initial edges, all the initial nodes should be included in the tree structure
     """
+
     n_components = adata_low.obsm['X_dr'].shape[1]
     epg_low = adata_low.uns['epg']
     kdtree = cKDTree(adata_low.obsm['X_dr'])
@@ -1833,40 +1791,37 @@ def infer_initial_structure(adata_low, nb_min=5):
 def seed_elastic_principal_graph(adata, init_nodes_pos=None, init_edges=None, clustering='kmeans', damping=0.75,
                                  pref_perc=50, n_clusters=10, max_n_clusters=200, n_neighbors=50, nb_pct=None,
                                  use_vis=False):
-    """Seeding the initial elastic principal graph.
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Seeding the initial elastic principal graph.
+    :param adata: AnnData
         Annotated data matrix.
-    init_nodes_pos: `array`, shape = [n_nodes,n_dimension], optional (default: `None`)
+    :param init_nodes_pos: `array`, shape = [n_nodes,n_dimension], optional (default: `None`)
         initial node positions
-    init_edges: `array`, shape = [n_edges,2], optional (default: `None`)
+    :param init_edges: `array`, shape = [n_edges,2], optional (default: `None`)
         initial edges, all the initial nodes should be included in the tree structure
-    clustering: `str`, optional (default: 'kmeans')
+    :param clustering: `str`, optional (default: 'kmeans')
         Choose from {{'ap','kmeans','sc'}}
         clustering method used to infer the initial nodes.
         'ap' affinity propagation
         'kmeans' K-Means clustering
         'sc' spectral clustering
-    damping: `float`, optional (default: 0.75)
+    :param damping: `float`, optional (default: 0.75)
         Damping factor (between 0.5 and 1) for affinity propagation.
-    pref_perc: `int`, optional (default: 50)
+    :param pref_perc: `int`, optional (default: 50)
         Preference percentile (between 0 and 100). The percentile of the input similarities for affinity propagation.
-    n_clusters: `int`, optional (default: 10)
+    :param n_clusters: `int`, optional (default: 10)
         Number of clusters (only valid once 'clustering' is specificed as 'sc' or 'kmeans').
-    max_n_clusters: `int`, optional (default: 200)
+    :param max_n_clusters: `int`, optional (default: 200)
         The allowed maximum number of clusters for 'ap'.
-    n_neighbors: `int`, optional (default: 50)
+    :param n_neighbors: `int`, optional (default: 50)
         The number of neighbor cells used for spectral clustering.
-    nb_pct: `float`, optional (default: None)
+    :param nb_pct: `float`, optional (default: None)
         The percentage of neighbor cells (when sepcified, it will overwrite n_neighbors).
-    use_vis: `bool`, optional (default: False)
+    :param use_vis: `bool`, optional (default: False)
         If True, the manifold learnt from st.plot_visualization_2D() will replace the manifold learnt from st.dimension_reduction().
         The principal graph will be learnt in the new manifold.
+    :return:
 
-    Returns
-    -------
     updates `adata` with the following fields.
 
     adata.obs: `pandas.core.frame.DataFrame` (`adata.obs`)
@@ -1882,13 +1837,6 @@ def seed_elastic_principal_graph(adata, init_nodes_pos=None, init_edges=None, cl
         Store seeded elastic principal graph structure
     seed_flat_tree : `networkx.classes.graph.Graph` (`adata.uns['flat_tree']`)
         Store seeded flat_tree
-
-    Notes
-    -------
-    The default procedure is fast and good enough when seeding structure in low-dimensional space.
-
-    when seeding structure in high-dimensional space, it's strongly recommended that using 'infer_initial_structure' to get the initial node positions and edges
-
     """
 
     print('Seeding initial elastic principal graph...')
@@ -1943,7 +1891,8 @@ def seed_elastic_principal_graph(adata, init_nodes_pos=None, init_edges=None, cl
         # Minimum Spanning Tree
         print('Calculatng minimum spanning tree...')
         D = pairwise_distances(epg_nodes_pos)
-        G = nx.from_numpy_matrix(D)
+        # G = nx.from_numpy_matrix(D)
+        G = nx.from_numpy_array(D)
         mst = nx.minimum_spanning_tree(G)
         epg_edges = np.array(mst.edges())
     else:
@@ -1976,46 +1925,43 @@ def elastic_principal_graph(adata, epg_n_nodes=50, incr_n_nodes=30, epg_lambda=0
                             epg_finalenergy='Penalized', epg_alpha=0.02, epg_beta=0.0, epg_n_processes=1, use_vis=False,
                             save_fig=False, fig_name='ElPiGraph_analysis.pdf', fig_path=None, fig_size=(8, 8),
                             **kwargs):
-    """Elastic principal graph learning.
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Elastic principal graph learning.
+    :param adata: AnnData
         Annotated data matrix.
-    epg_n_nodes: `int`, optional (default: 50)
+    :param epg_n_nodes: `int`, optional (default: 50)
         Number of nodes for elastic principal graph.
-    incr_n_nodes: `int`, optional (default: 30)
+    :param incr_n_nodes: `int`, optional (default: 30)
         Incremental number of nodes for elastic principal graph when epg_n_nodes is not big enough.
-    epg_lambda: `float`, optional (default: 0.02)
+    :param epg_lambda: `float`, optional (default: 0.02)
         lambda parameter used to compute the elastic energy.
-    epg_mu: `float`, optional (default: 0.1)
+    :param epg_mu: `float`, optional (default: 0.1)
         mu parameter used to compute the elastic energy.
-    epg_trimmingradius: `float`, optional (default: 'Inf')
+    :param epg_trimmingradius: `float`, optional (default: 'Inf')
         maximal distance from a node to the points it controls in the embedding.
-    epg_finalenergy: `str`, optional (default: 'Penalized')
+    :param epg_finalenergy: `str`, optional (default: 'Penalized')
         indicate the final elastic energy associated with the configuration.
-    epg_alpha: `float`, optional (default: 0.02)
+    :param epg_alpha: `float`, optional (default: 0.02)
         alpha parameter of the penalized elastic energy.
-    epg_beta: `float`, optional (default: 0.0)
+    :param epg_beta: `float`, optional (default: 0.0)
         beta parameter of the penalized elastic energy.
-    epg_n_processes: `int`, optional (default: 1)
+    :param epg_n_processes: `int`, optional (default: 1)
         the number of processes to use.
-    use_vis: `bool`, optional (default: False)
+    :param use_vis: `bool`, optional (default: False)
         Only valid when st.seed_elastic_principal_graph() is not performed.
         If True, the manifold learnt from st.plot_visualization_2D() will replace the manifold learnt from st.dimension_reduction().
         The principal graph will be learnt in the new manifold.
-    save_fig: `bool`, optional (default: False)
+    :param save_fig: `bool`, optional (default: False)
         if True,save the figure.
-    fig_size: `tuple`, optional (default: (8,8))
-        figure size.
-    fig_path: `str`, optional (default: None)
-        if None, adata.uns['workdir'] will be used.
-    fig_name: `str`, optional (default: 'ElPigraph_analysis.pdf')
+    :param fig_name: `str`, optional (default: 'ElPigraph_analysis.pdf')
         if save_fig is True, specify figure name.
-    **kwargs: additional arguments to `ElPiGraph.computeElasticPrincipalTree`
+    :param fig_path: `str`, optional (default: None)
+        if None, adata.uns['workdir'] will be used.
+    :param fig_size: `tuple`, optional (default: (8,8))
+        figure size.
+    :param kwargs: additional arguments to `ElPiGraph.computeElasticPrincipalTree`
+    :return:
 
-    Returns
-    -------
     updates `adata` with the following fields.
 
     adata.obs: `pandas.core.frame.DataFrame` (`adata.obs`)
@@ -2113,13 +2059,11 @@ def prune_elastic_principal_graph(adata, epg_collapse_mode='PointNumber', epg_co
                                   epg_lambda=None, epg_mu=None, epg_trimmingradius=None,
                                   epg_finalenergy='base', epg_alpha=None, epg_beta=None, epg_n_processes=1, reset=False,
                                   **kwargs):
-    """Prune the learnt elastic principal graph by filtering out 'trivial' branches.
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Prune the learnt elastic principal graph by filtering out 'trivial' branches.
+    :param adata: AnnData
         Annotated data matrix.
-    epg_collapse_mode: `str`, optional (default: 'PointNumber')
+    :param epg_collapse_mode: `str`, optional (default: 'PointNumber')
         The mode used to prune the graph.
         Choose from {{'PointNumber','PointNumber_Extrema','PointNumber_Leaves','EdgesNumber','EdgesLength'}}
         'PointNumber': branches with less than epg_collapse_par points (points projected on the extreme points are not considered) are removed
@@ -2127,28 +2071,27 @@ def prune_elastic_principal_graph(adata, epg_collapse_mode='PointNumber', epg_co
         'PointNumber_Leaves', branches with less than epg_collapse_par points (points projected on non-leaf extreme points are not considered) are removed
         'EdgesNumber', branches with less than epg_collapse_par edges are removed
         'EdgesLength', branches shorter than epg_collapse_par are removed
-    epg_collapse_par: `float`, optional (default: 5)
+    :param epg_collapse_par: `float`, optional (default: 5)
         The paramter used to control different modes.
-    epg_lambda: `float`, optional (default: None)
+    :param epg_lambda: `float`, optional (default: None)
         lambda parameter used to compute the elastic energy. By default using the same `epg_lambda` from `elastic_principal_graph()`
-    epg_mu: `float`, optional (default: None)
+    :param epg_mu: `float`, optional (default: None)
         mu parameter used to compute the elastic energy. By default using the same `epg_mu` from `elastic_principal_graph()`
-    epg_trimmingradius: `float`, optional (default: None)
-        maximal distance from a node to the points it controls in the embedding. By default using the same `epg_trimmingradius` from `elastic_principal_graph()`
-    epg_finalenergy: `str`, optional (default: 'Penalized')
+    :param epg_trimmingradius: `float`, optional (default: None)
+        maximal distance from a node to the points it controls in the embedding. By default using the same `epg_trimmingradius`
+    :param epg_finalenergy: `str`, optional (default: 'Penalized')
         indicate the final elastic energy associated with the configuration.
-    epg_alpha: `float`, optional (default: None)
+    :param epg_alpha: `float`, optional (default: None)
         alpha parameter of the penalized elastic energy. By default using the same `epg_alpha` from `elastic_principal_graph()`
-    epg_beta: `float`, optional (default: None)
+    :param epg_beta: `float`, optional (default: None)
         beta parameter of the penalized elastic energy. By default using the same `epg_beta` from `elastic_principal_graph()`
-    epg_n_processes: `int`, optional (default: 1)
+    :param epg_n_processes: `int`, optional (default: 1)
         The number of processes to use.
-    reset: `bool`, optional (default: False)
+    :param reset: `bool`, optional (default: False)
         If true, reset the current elastic principal graph to the initial elastic principal graph (i.e. the graph obtained from running 'elastic_principal_graph')
-    **kwargs: additional arguments to `ElPiGraph.CollapseBrances`
+    :param kwargs: additional arguments to `ElPiGraph.CollapseBrances`
+    :return:
 
-    Returns
-    -------
     updates `adata` with the following fields.
 
     adata.obs: `pandas.core.frame.DataFrame` (`adata.obs`)
@@ -2231,38 +2174,35 @@ def prune_elastic_principal_graph(adata, epg_collapse_mode='PointNumber', epg_co
 def optimize_branching(adata, incr_n_nodes=30, epg_maxsteps=50, mode=2,
                        epg_lambda=None, epg_mu=None, epg_trimmingradius=None,
                        epg_finalenergy='base', epg_alpha=None, epg_beta=None, epg_n_processes=1, reset=False, **kwargs):
-    """Optimize branching node by expanding the nodes around a branching point.
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Optimize branching node by expanding the nodes around a branching point.
+    :param adata: AnnData
         Annotated data matrix.
-    incr_n_nodes: `int`, optional (default: 30)
+    :param incr_n_nodes: `int`, optional (default: 30)
         Incremental number of nodes for elastic principal graph.
-    epg_maxsteps: `float`, optional (default: 50)
+    :param epg_maxsteps: `float`, optional (default: 50)
         The maximum number of iteration steps .
-    mode: `int`, optional (default: 2)
+    :param mode: `int`, optional (default: 2)
         The energy computation mode.
-    epg_lambda: `float`, optional (default: None)
+    :param epg_lambda: `float`, optional (default: None)
         lambda parameter used to compute the elastic energy. By default using the same `epg_lambda` from `elastic_principal_graph()`
-    epg_mu: `float`, optional (default: None)
+    :param epg_mu: `float`, optional (default: None)
         mu parameter used to compute the elastic energy. By default using the same `epg_mu` from `elastic_principal_graph()`
-    epg_trimmingradius: `float`, optional (default: None)
-        maximal distance from a node to the points it controls in the embedding. By default using the same `epg_trimmingradius` from `elastic_principal_graph()`
-    epg_finalenergy: `str`, optional (default: 'Penalized')
+    :param epg_trimmingradius: `float`, optional (default: None)
+        maximal distance from a node to the points it controls in the embedding. By default using the same `epg_trimmingradius`
+    :param epg_finalenergy: `str`, optional (default: 'Penalized')
         indicate the final elastic energy associated with the configuration.
-    epg_alpha: `float`, optional (default: 0.02)
+    :param epg_alpha: `float`, optional (default: 0.02)
         alpha parameter of the penalized elastic energy. By default using the same `epg_alpha` from `elastic_principal_graph()`
-    epg_beta: `float`, optional (default: 0.0)
+    :param epg_beta: `float`, optional (default: 0.0)
         beta parameter of the penalized elastic energy. By default using the same `epg_beta` from `elastic_principal_graph()`
-    epg_n_processes: `int`, optional (default: 1)
+    :param epg_n_processes: `int`, optional (default: 1)
         The number of processes to use.
-    reset: `bool`, optional (default: False)
+    :param reset: `bool`, optional (default: False)
         If true, reset the current elastic principal graph to the initial elastic principal graph (i.e. the graph obtained from running 'elastic_principal_graph')
-    **kwargs: additional arguments to `ElPiGraph.CollapseBrances`
+    :param kwargs: additional arguments to `ElPiGraph.CollapseBrances`
+    :return:
 
-    Returns
-    -------
     updates `adata` with the following fields.
 
     adata.obs: `pandas.core.frame.DataFrame` (`adata.obs`)
@@ -2348,39 +2288,36 @@ def optimize_branching(adata, incr_n_nodes=30, epg_maxsteps=50, mode=2,
 def shift_branching(adata, epg_shift_mode='NodeDensity', epg_shift_radius=0.05, epg_shift_max=5,
                     epg_lambda=None, epg_mu=None, epg_trimmingradius=None,
                     epg_finalenergy='base', epg_alpha=None, epg_beta=None, epg_n_processes=1, reset=False, **kwargs):
-    """Move branching node to the area with higher density.
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Move branching node to the area with higher density.
+    :param adata: AnnData
         Annotated data matrix.
-    epg_shift_mode: `str`, optional (default: 'NodeDensity')
+    :param epg_shift_mode: `str`, optional (default: 'NodeDensity')
         The mode used to shift the branching nodes.
         Choose from {{'NodePoints','NodeDensity'}}
-    epg_shift_radius: `float`, optional (default: 0.05)
+    :param epg_shift_radius: `float`, optional (default: 0.05)
         The radius used when computing point density if epg_shift_mode = 'NodeDensity'.
-    epg_shift_max: `float`, optional (default: 5)
+    :param epg_shift_max: `float`, optional (default: 5)
         The maxium distance (defined as the number of edges) to consider when exploring the neighborhood of branching point
-    epg_lambda: `float`, optional (default: None)
+    :param epg_lambda: `float`, optional (default: None)
         lambda parameter used to compute the elastic energy. By default using the same `epg_lambda` from `elastic_principal_graph()`
-    epg_mu: `float`, optional (default: None)
+    :param epg_mu: `float`, optional (default: None)
         mu parameter used to compute the elastic energy. By default using the same `epg_mu` from `elastic_principal_graph()`
-    epg_trimmingradius: `float`, optional (default: None)
+    :param epg_trimmingradius: `float`, optional (default: None)
         maximal distance from a node to the points it controls in the embedding. By default using the same `epg_trimmingradius` from `elastic_principal_graph()`
-    epg_finalenergy: `str`, optional (default: 'Penalized')
+    :param epg_finalenergy: `str`, optional (default: 'Penalized')
         indicate the final elastic energy associated with the configuration.
-    epg_alpha: `float`, optional (default: None)
+    :param epg_alpha: `float`, optional (default: None)
         alpha parameter of the penalized elastic energy. By default using the same `epg_alpha` from `elastic_principal_graph()`
-    epg_beta: `float`, optional (default: None)
+    :param epg_beta: `float`, optional (default: None)
         beta parameter of the penalized elastic energy. By default using the same `epg_beta` from `elastic_principal_graph()`
-    epg_n_processes: `int`, optional (default: 1)
+    :param epg_n_processes: `int`, optional (default: 1)
         The number of processes to use.
-    reset: `bool`, optional (default: False)
+    :param reset: `bool`, optional (default: False)
         If true, reset the current elastic principal graph to the initial elastic principal graph (i.e. the graph obtained from running 'elastic_principal_graph')
-    **kwargs: additional arguments to `ElPiGraph.CollapseBrances`
+    :param kwargs: additional arguments to `ElPiGraph.CollapseBrances`
+    :return:
 
-    Returns
-    -------
     updates `adata` with the following fields.
 
     adata.obs: `pandas.core.frame.DataFrame` (`adata.obs`)
@@ -2393,7 +2330,6 @@ def shift_branching(adata, epg_shift_mode='NodeDensity', epg_shift_radius=0.05, 
         An abstract of elastic principle graph structure by only keeping leaf nodes and branching nodes.
         It contains node attribtutes ('pos','label') and edge attributes ('nodes','id','len','color').
     """
-
     print('Shifting branching point to denser area ...')
     if (epg_alpha is None):
         epg_alpha = adata.uns['params']['epg']['epg_alpha']
@@ -2468,28 +2404,25 @@ def shift_branching(adata, epg_shift_mode='NodeDensity', epg_shift_radius=0.05, 
 
 def extend_elastic_principal_graph(adata, epg_ext_mode='QuantDists', epg_ext_par=0.5, epg_trimmingradius=None,
                                    reset=False, **kwargs):
-    """Extend the leaves of elastic principal graph with additional nodes.
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Extend the leaves of elastic principal graph with additional nodes.
+    :param adata: AnnData
         Annotated data matrix.
-    epg_ext_mode: `str`, optional (default: 'QuantDists')
+    :param epg_ext_mode: `str`, optional (default: 'QuantDists')
         The mode used to extend the leaves.
         Choose from {{'QuantDists','QuantCentroid','WeigthedCentroid'}}
         'QuantCentroid':for each leaf node, the extreme points are ordered by their distance from the node and the centroid of the points further than epg_ext_par is returned.
         'WeigthedCentroid':for each leaf node, a weight is computed for each points by raising the distance to the epg_ext_par power. Larger epg_ext_par results in a bigger influence of points further than the node
         'QuantDists':for each leaf node, the extreme points are ordered by their distance from the node and the 100*epg_ext_par th percentile of the points farther than epg_ext_par is returned
-    epg_ext_par: `float`, optional (default: 0.5)
+    :param epg_ext_par: `float`, optional (default: 0.5)
         The paramter used to control different modes.
-    epg_trimmingradius: `float`, optional (default: None)
+    :param epg_trimmingradius: `float`, optional (default: None)
         maximal distance from a node to the points it controls in the embedding. By default using the same `epg_trimmingradius` from `elastic_principal_graph()`
-    reset: `bool`, optional (default: False)
+    :param reset: `bool`, optional (default: False)
         If true, reset the current elastic principal graph to the initial elastic principal graph (i.e. the graph obtained from running 'elastic_principal_graph')
-    **kwargs: additional arguments to `ElPiGraph.CollapseBrances`
+    :param kwargs: additional arguments to `ElPiGraph.CollapseBrances`
+    :return:
 
-    Returns
-    -------
     updates `adata` with the following fields.
 
     adata.obs: `pandas.core.frame.DataFrame` (`adata.obs`)
@@ -2551,46 +2484,45 @@ def plot_flat_tree(adata, color=None, dist_scale=1,
                    show_text=False, show_graph=False,
                    save_fig=False, fig_path=None, fig_name='flat_tree.pdf',
                    plotly=False):
-    """Plot flat tree based on a modified version of the force-directed layout Fruchterman-Reingold algorithm.
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Plot flat tree based on a modified version of the force-directed layout Fruchterman-Reingold algorithm.
+    :param adata: AnnData
         Annotated data matrix.
-    color: `list` optional (default: None)
+    :param color: `list` optional (default: None)
         Column names of observations (adata.obs.columns) or variable names(adata.var_names). A list of names to be plotted.
-    dist_scale: `float`,optional (default: 1)
+    :param dist_scale: `float`,optional (default: 1)
         Scaling factor to scale the distance from cells to tree branches
         (by default, it keeps the same distance as in original manifold)
-    fig_size: `tuple`, optional (default: None)
+    :param fig_size: `tuple`, optional (default: None)
         figure size.
-    fig_legend_order: `dict`,optional (default: None)
+    :param fig_ncol:
+    :param fig_legend_ncol: `int`, optional (default: 1)
+        The number of columns that the legend has.
+    :param fig_legend_order: `dict`,optional (default: None)
         Specified order for the appearance of the annotation keys.Only valid for ategorical variable
         e.g. fig_legend_order = {'ann1':['a','b','c'],'ann2':['aa','bb','cc']}
-    fig_legend_ncol: `int`, optional (default: 1)
-        The number of columns that the legend has.
-    vmin,vmax: `float`, optional (default: None)
+    :param vmin, vmax: `float`, optional (default: None)
         The min and max values are used to normalize continuous values. If None, the respective min and max of continuous values is used.
-    alpha: `float`, optional (default: 0.8)
+    :param alpha: `float`, optional (default: 0.8)
         0.0 transparent through 1.0 opaque
-    pad: `float`, optional (default: 1.08)
+    :param pad: `float`, optional (default: 1.08)
         Padding between the figure edge and the edges of subplots, as a fraction of the font size.
-    h_pad, w_pad: `float`, optional (default: None)
+    :param w_pad, h_pad: `float`, optional (default: None)
         Padding (height/width) between edges of adjacent subplots, as a fraction of the font size. Defaults to pad.
-    show_text: `bool`, optional (default: False)
+    :param show_text: `bool`, optional (default: False)
         If True, node state label will be shown
-    show_graph: `bool`, optional (default: False)
+    :param show_graph: `bool`, optional (default: False)
         If True, the learnt principal graph will be shown
-    save_fig: `bool`, optional (default: False)
+    :param save_fig: `bool`, optional (default: False)
         if True,save the figure.
-    fig_path: `str`, optional (default: None)
+    :param fig_path: `str`, optional (default: None)
         if save_fig is True, specify figure path. if None, adata.uns['workdir'] will be used.
-    fig_name: `str`, optional (default: 'flat_tree.pdf')
+    :param fig_name: `str`, optional (default: 'flat_tree.pdf')
         if save_fig is True, specify figure name.
-    plotly: `bool`, optional (default: False)
+    :param plotly: `bool`, optional (default: False)
         if True, plotly will be used to make interactive plots.
+    :return:
 
-    Returns
-    -------
     updates `adata` with the following fields.
     X_spring: `numpy.ndarray` (`adata.obsm['X_spring']`)
         Store #observations × 2 coordinates of cells in flat tree.
@@ -2737,53 +2669,51 @@ def plot_visualization_2D(adata, method='umap', n_neighbors=50, nb_pct=None, per
                           pad=1.08, w_pad=None, h_pad=None,
                           save_fig=False, fig_path=None, fig_name='visualization_2D.pdf',
                           plotly=False):
-    """ Visualize the results in 2D plane
+    """Visualize the results in 2D plane
 
-    Parameters
-    ----------
-    adata: AnnData
+    :param adata: AnnData
         Annotated data matrix.
-    method: `str`, optional (default: 'umap')
+    :param method: `str`, optional (default: 'umap')
         Choose from {{'umap','tsne'}}
         Method used for visualization.
         'umap': Uniform Manifold Approximation and Projection
         'tsne': t-Distributed Stochastic Neighbor Embedding
-    n_neighbors: `int`, optional (default: 50)
+    :param n_neighbors: int`, optional (default: 50)
         The number of neighbor cells (only valid when 'umap' is specified).
-    nb_pct: `float`, optional (default: None)
+    :param nb_pct: `float`, optional (default: None)
         The percentage of neighbor cells (when sepcified, it will overwrite n_neighbors).
-    perplexity: `float`, optional (default: 30.0)
+    :param perplexity: `float`, optional (default: 30.0)
         The perplexity used for tSNE.
-    color: `list` optional (default: None)
+    :param color: `list` optional (default: None)
         Column names of observations (adata.obs.columns) or variable names(adata.var_names). A list of names to be plotted.
-    use_precomputed: `bool`, optional (default: True)
+    :param use_precomputed: `bool`, optional (default: True)
         If True, the visualization coordinates from previous computing will be used
-    fig_size: `tuple`, optional (default: None)
+    :param fig_size: `tuple`, optional (default: None)
         figure size.
-    fig_legend_order: `dict`,optional (default: None)
+    :param fig_ncol:
+    :param fig_legend_ncol: `int`, optional (default: 1)
+        The number of columns that the legend has.
+    :param fig_legend_order: `dict`,optional (default: None)
         Specified order for the appearance of the annotation keys.Only valid for ategorical variable
         e.g. fig_legend_order = {'ann1':['a','b','c'],'ann2':['aa','bb','cc']}
-    fig_legend_ncol: `int`, optional (default: 1)
-        The number of columns that the legend has.
-    vmin,vmax: `float`, optional (default: None)
+    :param vmin, vmax: `float`, optional (default: None)
         The min and max values are used to normalize continuous values. If None, the respective min and max of continuous values is used.
-    alpha: `float`, optional (default: 0.8)
+    :param alpha: `float`, optional (default: 0.8)
         0.0 transparent through 1.0 opaque
-    pad: `float`, optional (default: 1.08)
+    :param pad: `float`, optional (default: 1.08)
         Padding between the figure edge and the edges of subplots, as a fraction of the font size.
-    h_pad, w_pad: `float`, optional (default: None)
+    :param w_pad, h_pad: `float`, optional (default: None)
         Padding (height/width) between edges of adjacent subplots, as a fraction of the font size. Defaults to pad.
-    save_fig: `bool`, optional (default: False)
+    :param save_fig: `bool`, optional (default: False)
         if True,save the figure.
-    fig_path: `str`, optional (default: None)
+    :param fig_path: `str`, optional (default: None)
         if save_fig is True, specify figure path. if None, adata.uns['workdir'] will be used.
-    fig_name: `str`, optional (default: 'visualization_2D.pdf')
+    :param fig_name: `str`, optional (default: 'visualization_2D.pdf')
         if save_fig is True, specify figure name.
-    plotly: `bool`, optional (default: False)
+    :param plotly: `bool`, optional (default: False)
         if True, plotly will be used to make interactive plots
+    :return:
 
-    Returns
-    -------
     updates `adata` with the following fields. (Depending on `method`)
     vis_trans_umap : `umap.UMAP` (`adata.uns['vis_trans_umap']`)
         Store umap object
@@ -2796,6 +2726,7 @@ def plot_visualization_2D(adata, method='umap', n_neighbors=50, nb_pct=None, per
     X_vis : `numpy.ndarray` (`adata.obsm['X_vis']`)
         A #observations × 2 data matrix after visualization.
     """
+
     if (fig_path is None):
         fig_path = adata.uns['workdir']
     fig_size = mpl.rcParams['figure.figsize'] if fig_size is None else fig_size
@@ -2918,6 +2849,7 @@ def plot_visualization_2D(adata, method='umap', n_neighbors=50, nb_pct=None, per
             plt.close(fig)
 
 
+# TODO 修改名称
 def plot_stream_sc(adata, root='S0', color=None, dist_scale=1, dist_pctl=95, preference=None,
                    fig_size=(7, 4.5), fig_legend_ncol=1, fig_legend_order=None,
                    vmin=None, vmax=None, alpha=0.8,
@@ -2925,61 +2857,57 @@ def plot_stream_sc(adata, root='S0', color=None, dist_scale=1, dist_pctl=95, pre
                    show_text=True, show_graph=True,
                    save_fig=False, fig_path=None, fig_format='pdf',
                    plotly=False):
-    """Generate stream plot at single cell level (aka, subway map plots)
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Generate stream plot at single cell level (aka, subway map plots)
+    :param adata: AnnData
         Annotated data matrix.
-    root: `str`, optional (default: 'S0'):
+    :param root: `str`, optional (default: 'S0'):
         The starting node
-    color: `list` optional (default: None)
+    :param color: `list` optional (default: None)
         Column names of observations (adata.obs.columns) or variable names(adata.var_names). A list of names to be plotted.
-    dist_scale: `float`,optional (default: 1)
+    :param dist_scale: `float`,optional (default: 1)
         Scaling factor to scale the distance from cells to tree branches
         (by default, it keeps the same distance as in original manifold)
-    dist_pctl: `int`, optional (default: 95)
+    :param dist_pctl: `int`, optional (default: 95)
         Percentile of cells' distances from branches (between 0 and 100) used for calculating the distances between branches.
-    preference: `list`, optional (default: None):
+    :param preference: `list`, optional (default: None):
         The preference of nodes. The branch with speficied nodes are preferred and put on the top part of stream plot.
         The higher ranks the node have, the closer to the top the branch with that node is.
-    fig_size: `tuple`, optional (default: (7,4.5))
+    :param fig_size: `tuple`, optional (default: (7,4.5))
         figure size.
-    fig_legend_order: `dict`,optional (default: None)
+    :param fig_legend_ncol: `int`, optional (default: 1)
+        The number of columns that the legend has.
+    :param fig_legend_order: `dict`,optional (default: None)
         Specified order for the appearance of the annotation keys.Only valid for ategorical variable
         e.g. fig_legend_order = {'ann1':['a','b','c'],'ann2':['aa','bb','cc']}
-    fig_legend_ncol: `int`, optional (default: 1)
-        The number of columns that the legend has.
-    vmin,vmax: `float`, optional (default: None)
+    :param vmin, vmax: `float`, optional (default: None)
         The min and max values are used to normalize continuous values. If None, the respective min and max of continuous values is used.
-    alpha: `float`, optional (default: 0.8)
+    :param alpha: `float`, optional (default: 0.8)
         0.0 transparent through 1.0 opaque
-    pad: `float`, optional (default: 1.08)
+    :param pad: `float`, optional (default: 1.08)
         Padding between the figure edge and the edges of subplots, as a fraction of the font size.
-    h_pad, w_pad: `float`, optional (default: None)
+    :param w_pad, h_pad: `float`, optional (default: None)
         Padding (height/width) between edges of adjacent subplots, as a fraction of the font size. Defaults to pad.
-    show_text: `bool`, optional (default: False)
+    :param show_text: `bool`, optional (default: False)
         If True, node state label will be shown
-    show_graph: `bool`, optional (default: False)
+    :param show_graph: `bool`, optional (default: False)
         If True, the learnt principal graph will be shown
-    save_fig: `bool`, optional (default: False)
+    :param save_fig: `bool`, optional (default: False)
         if True,save the figure.
-    fig_path: `str`, optional (default: None)
+    :param fig_path: `str`, optional (default: None)
         if save_fig is True, specify figure path. if None, adata.uns['workdir'] will be used.
-    fig_format: `str`, optional (default: 'pdf')
+    :param fig_format: `str`, optional (default: 'pdf')
         if save_fig is True, specify figure format.
-    plotly: `bool`, optional (default: False)
+    :param plotly: `bool`, optional (default: False)
         if True, plotly will be used to make interactive plots
+    :return:
 
-    Returns
-    -------
     updates `adata` with the following fields.
     X_stream_root: `numpy.ndarray` (`adata.obsm['X_stream_root']`)
         Store #observations × 2 coordinates of cells in subwaymap plot.
     stream_root: `dict` (`adata.uns['stream_root']`)
         Store the coordinates of nodes ('nodes') and edges ('edges') in subwaymap plot.
     """
-
     if (fig_path is None):
         fig_path = adata.uns['workdir']
     fig_size = mpl.rcParams['figure.figsize'] if fig_size is None else fig_size
@@ -3144,61 +3072,55 @@ def plot_stream(adata, root='S0', color=None, preference=None, dist_scale=0.9,
                 vmin=None, vmax=None,
                 pad=1.08, w_pad=None, h_pad=None,
                 save_fig=False, fig_path=None, fig_format='pdf'):
-    """Generate stream plot at density level
-
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Generate stream plot at density level
+    :param adata: AnnData
         Annotated data matrix.
-    root: `str`, optional (default: 'S0'):
+    :param root: `str`, optional (default: 'S0'):
         The starting node
-    color: `list` optional (default: None)
+    :param color: `list` optional (default: None)
         Column names of observations (adata.obs.columns) or variable names(adata.var_names). A list of names to be plotted.
-    preference: `list`, optional (default: None):
+    :param preference: `list`, optional (default: None):
         The preference of nodes. The branch with speficied nodes are preferred and put on the top part of stream plot.
         The higher ranks the node have, the closer to the top the branch with that node is.
-    dist_scale: `float`,optional (default: 0.9)
+    :param dist_scale: `float`,optional (default: 0.9)
         Scaling factor. It controls the width of STREAM plot branches. The smaller, the thinner the branch will be.
-    factor_num_win: `int`, optional (default: 10)
-        Number of sliding windows used for making stream plot. It controls the smoothness of STREAM plot.
-    factor_min_win: `float`, optional (default: 2.0)
+    :param factor_num_win: `int`, optional (default: 10)
+        Number of sliding windows used for making stream plot. It controls the smoothness of plot.
+    :param factor_min_win: `float`, optional (default: 2.0)
         The minimum number of sliding windows. It controls the resolution of STREAM plot. The window size is calculated based on shortest branch. (suggested range: 1.5~3.0)
-    factor_width: `float`, optional (default: 2.5)
+    :param factor_width: `float`, optional (default: 2.5)
         The ratio between length and width of stream plot.
-    factor_nrow: `int`, optional (default: 200)
+    :param factor_nrow: `int`, optional (default: 200)
         The number of rows in the array used to plot continuous values
-    factor_ncol: `int`, optional (default: 400)
+    :param factor_ncol: `int`, optional (default: 400)
         The number of columns in the array used to plot continuous values
-    log_scale: `bool`, optional (default: False)
+    :param log_scale: `bool`, optional (default: False)
         If True,the number of cells (the width) is logarithmized when drawing stream plot.
-    factor_zoomin: `float`, optional (default: 100.0)
+    :param factor_zoomin: `float`, optional (default: 100.0)
         If log_scale is True, the factor used to zoom in the thin branches
-    fig_size: `tuple`, optional (default: (7,4.5))
+    :param fig_size: `tuple`, optional (default: (7,4.5))
         figure size.
-    fig_legend_order: `dict`,optional (default: None)
+    :param fig_legend_order: `dict`,optional (default: None)
         Specified order for the appearance of the annotation keys.Only valid for ategorical variable
         e.g. fig_legend_order = {'ann1':['a','b','c'],'ann2':['aa','bb','cc']}
-    fig_legend_ncol: `int`, optional (default: 1)
+    :param fig_legend_ncol: `int`, optional (default: 1)
         The number of columns that the legend has.
-    vmin,vmax: `float`, optional (default: None)
+    :param fig_colorbar_aspect:
+    :param vmin, vmax: `float`, optional (default: None)
         The min and max values are used to normalize continuous values. If None, the respective min and max of continuous values is used.
-    pad: `float`, optional (default: 1.08)
+    :param pad: `float`, optional (default: 1.08)
         Padding between the figure edge and the edges of subplots, as a fraction of the font size.
-    h_pad, w_pad: `float`, optional (default: None)
+    :param w_pad, h_pad: `float`, optional (default: None)
         Padding (height/width) between edges of adjacent subplots, as a fraction of the font size. Defaults to pad.
-    save_fig: `bool`, optional (default: False)
+    :param save_fig: `bool`, optional (default: False)
         if True,save the figure.
-    fig_path: `str`, optional (default: None)
+    :param fig_path: `str`, optional (default: None)
         if save_fig is True, specify figure path. if None, adata.uns['workdir'] will be used.
-    fig_format: `str`, optional (default: 'pdf')
+    :param fig_format: `str`, optional (default: 'pdf')
         if save_fig is True, specify figure format.
-
-    Returns
-    -------
-    None
-
+    :return:
     """
-
     if (fig_path is None):
         fig_path = adata.uns['workdir']
     fig_size = mpl.rcParams['figure.figsize'] if fig_size is None else fig_size
@@ -3346,39 +3268,37 @@ def plot_stream(adata, root='S0', color=None, preference=None, dist_scale=0.9,
 def detect_transition_markers(adata, marker_list=None, cutoff_spearman=0.4, cutoff_logfc=0.25, percentile_expr=95,
                               n_jobs=1, min_num_cells=5,
                               use_precomputed=True, root='S0', preference=None):
-    """Detect transition markers along one branch.
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Detect transition markers along one branch.
+    :param adata: AnnData
         Annotated data matrix.
-    marker_list: `list`, optional (default: None):
+    :param marker_list: `list`, optional (default: None):
         A list of candidate markers to be scanned. Instead of scanning all available genes/peaks/kmers/motifs, this will limit the scanning to a specific list of genes/peaks/kmers/motifs
         If none, all available features (genes/peaks/kmers/motifs) will be scanned.
-    cutoff_spearman: `float`, optional (default: 0.4)
+    :param cutoff_spearman: `float`, optional (default: 0.4)
         Between 0 and 1. The cutoff used for Spearman's rank correlation coefficient.
-    cutoff_logfc: `float`, optional (default: 0.25)
+    :param cutoff_logfc: `float`, optional (default: 0.25)
         The log2-transformed fold change cutoff between cells around start and end node.
-    percentile_expr: `int`, optional (default: 95)
+    :param percentile_expr: `int`, optional (default: 95)
         Between 0 and 100. Between 0 and 100. Specify the percentile of marker expression greater than 0 to filter out some extreme marker expressions.
-    min_num_cells: `int`, optional (default: 5)
-        The minimum number of cells in which markers are expressed.
-    n_jobs: `int`, optional (default: 1)
+    :param n_jobs: `int`, optional (default: 1)
         The number of parallel jobs to run when scaling the marker expressions .
-    use_precomputed: `bool`, optional (default: True)
+    :param min_num_cells: `int`, optional (default: 5)
+        The minimum number of cells in which markers are expressed.
+    :param use_precomputed: `bool`, optional (default: True)
         If True, the previously computed scaled marker expression will be used
-    root: `str`, optional (default: 'S0'):
+    :param root: `str`, optional (default: 'S0'):
         The starting node
-    preference: `list`, optional (default: None):
+    :param preference: `list`, optional (default: None):
         The preference of nodes. The branch with speficied nodes are preferred and will be dealt with first. The higher ranks the node have, The earlier the branch with that node will be analyzed.
         This will help generate the consistent results as shown in subway map and stream plot.
+    :return:
 
-    Returns
-    -------
     updates `adata` with the following fields.
     scaled_marker_expr: `list` (`adata.uns['scaled_marker_expr']`)
         Scaled marker expression for marker marker detection.
     transition_markers: `dict` (`adata.uns['transition_markers']`)
-        Transition markers for each branch deteced by STREAM.
+        Transition markers for each branch deteced by software.
     """
 
     file_path = os.path.join(adata.uns['workdir'], 'transition_markers')
@@ -3547,34 +3467,32 @@ def plot_transition_markers(adata, num_markers=15,
 def detect_de_markers(adata, marker_list=None, cutoff_zscore=1, cutoff_logfc=0.25, percentile_expr=95, n_jobs=1,
                       min_num_cells=5,
                       use_precomputed=True, root='S0', preference=None):
-    """Detect differentially expressed markers between different sub-branches.
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Detect differentially expressed markers between different sub-branches.
+    :param adata: AnnData
         Annotated data matrix.
-    marker_list: `list`, optional (default: None):
+    :param marker_list: `list`, optional (default: None):
         A list of candidate markers to be scanned. Instead of scanning all available genes/peaks/kmers/motifs, this will limit the scanning to a specific list of genes/peaks/kmers/motifs
         If none, all available features (genes/peaks/kmers/motifs) will be scanned.
-    cutoff_zscore: `float`, optional (default: 1)
+    :param cutoff_zscore: `float`, optional (default: 1)
         The z-score cutoff used for Mann–Whitney U test.
-    cutoff_logfc: `float`, optional (default: 0.25)
+    :param cutoff_logfc: `float`, optional (default: 0.25)
         The log-transformed fold change cutoff between a pair of branches.
-    percentile_expr: `int`, optional (default: 95)
+    :param percentile_expr: `int`, optional (default: 95)
         Between 0 and 100. Between 0 and 100. Specify the percentile of marker expression greater than 0 to filter out some extreme marker expressions.
-    n_jobs: `int`, optional (default: 1)
-        The number of parallel jobs to run when scaling the marker expressions .
-    min_num_cells: `int`, optional (default: 5)
+    :param n_jobs: `int`, optional (default: 1)
+        The number of parallel jobs to run when scaling the marker expressions.
+    :param min_num_cells: `int`, optional (default: 5)
         The minimum number of cells in which markers are expressed.
-    use_precomputed: `bool`, optional (default: True)
+    :param use_precomputed: `bool`, optional (default: True)
         If True, the previously computed scaled marker expression will be used
-    root: `str`, optional (default: 'S0'):
+    :param root: `str`, optional (default: 'S0'):
         The starting node
-    preference: `list`, optional (default: None):
+    :param preference: `list`, optional (default: None):
         The preference of nodes. The branch with speficied nodes are preferred and will be dealt with first. The higher ranks the node have, The earlier the branch with that node will be analyzed.
         This will help generate the consistent results as shown in subway map and stream plot.
+    :return:
 
-    Returns
-    -------
     updates `adata` with the following fields.
     scaled_marker_expr: `list` (`adata.uns['scaled_marker_expr']`)
         Scaled marker expression for marker marker detection.
@@ -3879,34 +3797,32 @@ def plot_de_markers(adata, num_markers=15, cutoff_zscore=1, cutoff_logfc=0.25,
 def detect_leaf_markers(adata, marker_list=None, cutoff_zscore=1., cutoff_pvalue=1e-2, percentile_expr=95, n_jobs=1,
                         min_num_cells=5,
                         use_precomputed=True, root='S0', preference=None):
-    """Detect leaf markers for each branch.
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Detect leaf markers for each branch.
+    :param adata: AnnData
         Annotated data matrix.
-    marker_list: `list`, optional (default: None):
+    :param marker_list: `list`, optional (default: None):
         A list of candidate markers to be scanned. Instead of scanning all available genes/peaks/kmers/motifs, this will limit the scanning to a specific list of genes/peaks/kmers/motifs
         If none, all available features (genes/peaks/kmers/motifs) will be scanned.
-    cutoff_zscore: `float`, optional (default: 1.5)
+    :param cutoff_zscore: `float`, optional (default: 1.5)
         The z-score cutoff used for mean values of all leaf branches.
-    cutoff_pvalue: `float`, optional (default: 1e-2)
+    :param cutoff_pvalue: `float`, optional (default: 1e-2)
         The p value cutoff used for Kruskal-Wallis H-test and post-hoc pairwise Conover’s test.
-    percentile_expr: `int`, optional (default: 95)
+    :param percentile_expr: `int`, optional (default: 95)
         Between 0 and 100. Between 0 and 100. Specify the percentile of marker expression greater than 0 to filter out some extreme marker expressions.
-    n_jobs: `int`, optional (default: 1)
+    :param n_jobs: `int`, optional (default: 1)
         The number of parallel jobs to run when scaling the marker expressions .
-    min_num_cells: `int`, optional (default: 5)
+    :param min_num_cells: `int`, optional (default: 5)
         The minimum number of cells in which markers are expressed.
-    use_precomputed: `bool`, optional (default: True)
+    :param use_precomputed: `bool`, optional (default: True)
         If True, the previously computed scaled marker expression will be used
-    root: `str`, optional (default: 'S0'):
+    :param root: `str`, optional (default: 'S0'):
         The starting node
-    preference: `list`, optional (default: None):
+    :param preference: `list`, optional (default: None):
         The preference of nodes. The branch with speficied nodes are preferred and will be dealt with first. The higher ranks the node have, The earlier the branch with that node will be analyzed.
         This will help generate the consistent results as shown in subway map and stream plot.
+    :return:
 
-    Returns
-    -------
     updates `adata` with the following fields.
     scaled_marker_expr: `list` (`adata.uns['scaled_marker_expr']`)
         Scaled marker expression for marker marker detection.
@@ -4034,29 +3950,28 @@ def detect_leaf_markers(adata, marker_list=None, cutoff_zscore=1., cutoff_pvalue
 def detect_markers(adata, marker_list=None, ident='label', cutoff_zscore=1., cutoff_pvalue=1e-2, percentile_expr=95,
                    n_jobs=1, min_num_cells=5,
                    use_precomputed=True):
-    """Detect markers (highly expressed or suppressed) for the specified ident.
-    Parameters
-    ----------
-    adata: AnnData
+    """
+    Detect markers (highly expressed or suppressed) for the specified ident.
+    :param adata: AnnData
         Annotated data matrix.
-    marker_list: `list`, optional (default: None):
+    :param marker_list: `list`, optional (default: None):
         A list of candidate markers to be scanned. Instead of scanning all available genes/peaks/kmers/motifs, this will limit the scanning to a specific list of genes/peaks/kmers/motifs
         If none, all available features (genes/peaks/kmers/motifs) will be scanned.
-    cutoff_zscore: `float`, optional (default: 1.5)
+    :param ident:
+    :param cutoff_zscore: `float`, optional (default: 1.5)
         The z-score cutoff used for mean values of all leaf branches.
-    cutoff_pvalue: `float`, optional (default: 1e-2)
+    :param cutoff_pvalue: `float`, optional (default: 1e-2)
         The p value cutoff used for Kruskal-Wallis H-test and post-hoc pairwise Conover’s test.
-    percentile_expr: `int`, optional (default: 95)
+    :param percentile_expr: `int`, optional (default: 95)
         Between 0 and 100. Between 0 and 100. Specify the percentile of marker expression greater than 0 to filter out some extreme marker expressions.
-    n_jobs: `int`, optional (default: all available cpus)
-        The number of parallel jobs to run when scaling the marker expressions .
-    min_num_cells: `int`, optional (default: 5)
+    :param n_jobs: `int`, optional (default: all available cpus)
+        The number of parallel jobs to run when scaling the marker expressions
+    :param min_num_cells: int`, optional (default: 5)
         The minimum number of cells in which markers are expressed.
-    use_precomputed: `bool`, optional (default: True)
+    :param use_precomputed: `bool`, optional (default: True)
         If True, the previously computed scaled marker expression will be used
+    :return:
 
-    Returns
-    -------
     updates `adata` with the following fields.
     scaled_marker_expr: `list` (`adata.uns['scaled_marker_expr']`)
         Scaled marker expression for marker marker detection.
@@ -4156,26 +4071,15 @@ def detect_markers(adata, marker_list=None, ident='label', cutoff_zscore=1., cut
 
 
 def map_new_data(adata_ref, adata_new, use_radius=False):
-    """ Map new data to the inferred trajectories
-
-    Parameters
-    ----------
-    adata_ref: reference AnnData
+    """
+    Map new data to the inferred trajectories
+    :param adata_ref: reference AnnData
         Annotated data matrix.
-    adata_new: new AnnData
+    :param adata_new: new AnnData
         Annotated data matrix for new data (to be mapped).
-    use_radius: `bool`, optional (default: False)
+    :param use_radius: `bool`, optional (default: False)
         Only valid when `method = 'mlle'`. If True, when searching for the neighbors for each cell in MLLE space, STREAM uses a fixed radius instead of a fixed number of cells.
-    first_pc: `bool`, optional (default: False)
-        Only valid when `feature='top_pcs'` If True, the first principal component will be included
-    top_pcs_feature: `str`, optional (default: None)
-        Choose from {{'var_genes'}}
-        Only valid when `feature='top_pcs'`.
-        Features used for pricipal component analysis
-        If None, all the genes will be used.
-        IF 'var_genes', the most variable genes obtained from select_variable_genes() will be used.
-    Returns
-    -------
+    :return:
 
     Combined AnnData object. Only the shared obs_keys and var_keys will be preserved
     updates `adata` with the following fields.
@@ -4307,24 +4211,19 @@ def map_new_data(adata_ref, adata_new, use_radius=False):
 
 
 def save_vr_report(adata, ann_list=None, gene_list=None, file_name='stream_vr_report'):
-    """save stream report for single cell VR website http://www.singlecellvr.com/
-
-    Parameters
-    ----------
-    adata: AnnData
-        Annotated data matrix.
-    ann_list: `list`, optional (default: None):
-        A list of cell annotation keys. If None, only 'label' will be used.
-    gene_list: `list`, optional (default: None):
-        A list of genes to be displayed
-    file_name: `str`, optional (default: 'stream_vr_report')
-        Ouput Zip file name.
-
-    Returns
-    -------
-    None
-
     """
+    save stream report for single cell VR website http://www.singlecellvr.com/
+    :param adata: AnnData
+        Annotated data matrix.
+    :param ann_list: `list`, optional (default: None):
+        A list of cell annotation keys. If None, only 'label' will be used.
+    :param gene_list: `list`, optional (default: None):
+        A list of genes to be displayed
+    :param file_name: `str`, optional (default: 'stream_vr_report')
+        Ouput Zip file name.
+    :return:
+    """
+
     assert (adata.obsm['X_dr'].shape[1] >= 3), \
         '''The embedding space should have at least three dimensions. 
         please set `n_component = 3` in `st.dimension_reduction()`'''
